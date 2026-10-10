@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 import javax.sql.DataSource;
-import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -28,7 +28,7 @@ public class BasesDeDatosConfig {
         String password = env.getRequiredProperty("app.bases.password");
         int poolMaximo = env.getProperty("app.bases.pool-maximo", Integer.class, 5);
 
-        Map<Object, Object> destinos = new EnumMap<>(Tamano.class);
+        Map<Object, Object> destinos = new HashMap<>();
         for (Tamano tamano : Tamano.values()) {
             String url = env.getRequiredProperty("app.bases." + tamano.name().toLowerCase() + ".url");
 
