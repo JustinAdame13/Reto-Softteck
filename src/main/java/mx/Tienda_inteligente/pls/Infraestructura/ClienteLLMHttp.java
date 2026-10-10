@@ -1,11 +1,14 @@
 package mx.Tienda_inteligente.pls.Infraestructura;
 
 import mx.Tienda_inteligente.pls.Interfaces.ClienteLLM;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.json.JsonParser;
 import org.springframework.boot.json.JsonParserFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
@@ -24,6 +27,14 @@ public abstract class ClienteLLMHttp implements ClienteLLM {
      * cada corrida y /predicciones/comparar se ve inestable frente al jurado.
      */
     protected static final double TEMPERATURA = 0.0;
+
+    /**
+     * Esperas entre reintentos cuando el proveedor esta saturado (429/5xx).
+     * 2 reintentos: 2 s y luego 5 s. Si sigue fallando, el lote se queda con Ayax sin IA.
+     */
+    private static final long[] ESPERAS_REINTENTO_MS = {2_000, 5_000};
+
+    private static final Logger log = LoggerFactory.getLogger(ClienteLLMHttp.class);
 
     protected final JsonParser json = JsonParserFactory.getJsonParser();
     protected final RestClient http;
@@ -80,13 +91,32 @@ public abstract class ClienteLLMHttp implements ClienteLLM {
         String pre = prefill == null ? "" : prefill;
         String m = modeloElegido == null || modeloElegido.isBlank() ? modelo : modeloElegido.trim();
 
-        String crudo = http.post()
-                .uri(ruta(m))
-                .headers(this::cabeceras)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(cuerpo(m, sistema, prompt, maxTokens, pre))
-                .retrieve()
-                .body(String.class);
+        Map<String, Object> peticion = cuerpo(m, sistema, prompt, maxTokens, pre);
+        String crudo = null;
+        for (int intento = 0; ; intento++) {
+            try {
+                crudo = http.post()
+                        .uri(ruta(m))
+                        .headers(this::cabeceras)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(peticion)
+                        .retrieve()
+                        .body(String.class);
+                break;
+            } catch (HttpStatusCodeException e) {
+                // 429 (limite de uso) y 5xx (servidor saturado, p. ej. Gemini "high demand")
+                // suelen ser momentaneos: se reintenta con espera creciente.
+                // Cualquier otro error (400 peticion mala, 401/403 llave) no mejora reintentando.
+                int status = e.getStatusCode().value();
+                boolean temporal = status == 429 || status >= 500;
+                if (!temporal || intento >= ESPERAS_REINTENTO_MS.length) {
+                    throw e;
+                }
+                log.warn("{} respondio {} (intento {}); se reintenta en {} ms",
+                        proveedor(), status, intento + 1, ESPERAS_REINTENTO_MS[intento]);
+                Thread.sleep(ESPERAS_REINTENTO_MS[intento]);
+            }
+        }
 
         String textoRespuesta = extraerTexto(json.parseMap(crudo == null || crudo.isBlank() ? "{}" : crudo));
 
