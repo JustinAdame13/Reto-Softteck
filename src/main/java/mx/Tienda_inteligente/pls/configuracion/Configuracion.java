@@ -1,14 +1,10 @@
 package mx.Tienda_inteligente.pls.configuracion;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import mx.Tienda_inteligente.pls.Enums.Enums;
 
 import java.math.BigDecimal;
 import java.time.LocalTime;
@@ -42,8 +38,19 @@ public class Configuracion {
     @Column(name = "hora_cierre", nullable = false)
     private LocalTime horaCierre;
 
-    @Column(name = "ia_habilitada", nullable = false)
-    private boolean iaHabilitada;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "proveedor_ia", nullable = false, length = 20)
+    private Enums.ProveedorIA proveedorIa = Enums.ProveedorIA.NINGUNO;
+
+    @Column(name = "modelo_ia", length = 80)
+    private String modeloIa;
+
+    /** Conveniencia para el frontend y para los if del servicio. */
+    @Transient
+    public boolean isIaActiva() {
+        return proveedorIa != null
+                && proveedorIa != Enums.ProveedorIA.NINGUNO;
+    }
 
     /** Fraccion: 0.10 = 10 % sobre el costo. */
     @Column(name = "margen_minimo_promo", nullable = false, precision = 5, scale = 4)
