@@ -4,15 +4,20 @@ API REST con Spring Boot 4 + PostgreSQL + Flyway. Base: `http://localhost:8080/a
 
 ## Cómo correrlo
 
-1. Crea la base de datos en PostgreSQL (por defecto `mibase_limpia`; otra con `DB_URL`).
+1. Crea las **3 bases** en PostgreSQL, una por sucursal de demo: `tienda_pequena`, `tienda_mediana`, `tienda_grande`
+   (otros nombres con `DB_URL_*`). Al arrancar, Flyway migra las 3.
 2. Configura las **variables de entorno**. No hay archivo `.env`: `application.properties` las lee directo.
    En IntelliJ: *Run → Edit Configurations → PlsApplication → Environment variables*.
 
    | Variable | Obligatoria | Por defecto |
    |---|---|---|
    | `DB_PASSWORD` | **Sí** | — |
-   | `DB_URL` | No | `jdbc:postgresql://localhost:5432/mibase_limpia` |
-   | `DB_USERNAME` | No | `postgres` |
+   | `DB_USERNAME` | **Sí** | — (el mismo para las 3 bases) |
+   | `DB_URL_PEQUENA` | No | `jdbc:postgresql://localhost:5432/tienda_pequena` |
+   | `DB_URL_MEDIANA` | No | `jdbc:postgresql://localhost:5432/tienda_mediana` |
+   | `DB_URL_GRANDE` | No | `jdbc:postgresql://localhost:5432/tienda_grande` |
+   | `DB_INICIAL` | No | `MEDIANA` (base activa al arrancar) |
+   | `DB_POOL_MAXIMO` | No | `5` (conexiones por base) |
    | `PORT` | No | `8080` |
    | `CORS_ORIGINS` | No | `http://localhost:5173,http://localhost:3000` |
    | `IA_ANTHROPIC_API_KEY` / `IA_OPENAI_API_KEY` / `IA_GEMINI_API_KEY` | No | vacía (IA apagada) |
@@ -22,6 +27,12 @@ API REST con Spring Boot 4 + PostgreSQL + Flyway. Base: `http://localhost:8080/a
    | `SHOW_SQL` | No | `false` |
 
    En la nube se ponen en el panel de variables de entorno de la plataforma.
+
+   **Cambiar de sucursal en caliente:** `GET /sucursal-activa` → `{"activa":"MEDIANA","disponibles":[...]}`;
+   `PUT /sucursal-activa` con `{"tamano":"GRANDE"}`. Cada base tiene su propia fila de `configuracion` (incluida la IA).
+
+   **Deploy:** Render (Docker, con el `Dockerfile` de la raíz) + Neon. En Neon usa el host **directo** (sin `-pooler`)
+   y la URL en formato JDBC: `jdbc:postgresql://<host>/<base>?sslmode=require`.
 3. Corre `PlsApplication`. Flyway crea las tablas (V1), la configuración inicial (V2) y el proveedor de IA (V3).
 4. (Opcional) Con una llave de IA configurada, prende el proveedor con
    `PATCH /configuracion/ia` → `{"proveedorIa": "ANTHROPIC"}` (opcional `"modeloIa"`). Apagar: `{"proveedorIa": "NINGUNO"}`.
