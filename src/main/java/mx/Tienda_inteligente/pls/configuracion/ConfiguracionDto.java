@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import mx.Tienda_inteligente.pls.Enums.*;
 
 import java.math.BigDecimal;
 import java.time.LocalTime;
@@ -16,19 +17,27 @@ public record ConfiguracionDto(
         @NotNull Tamano tamano,
         @NotNull LocalTime horaApertura,
         @NotNull LocalTime horaCierre,
-        Boolean iaHabilitada,
         @NotNull @DecimalMin("0") @DecimalMax("1") BigDecimal margenMinimoPromo,
         @NotNull @DecimalMin("0") @DecimalMax("100") BigDecimal descuentoMaximo,
         @NotNull @Min(1) Integer mesesHistorico,
         @NotNull @Min(1) Integer transaccionesPorEmpleadoHora,
-        /** Solo lectura: indica si hay API key de IA configurada en el servidor. */
-        Boolean iaDisponible
+
+        /** Solo lectura en el PUT. Se cambia con PATCH /configuracion/ia */
+        Enums.ProveedorIA proveedorIa,
+
+        /** Solo lectura en el PUT. Null significa usar el modelo del .env */
+        String modeloIa,
+
+        /** Solo lectura: el proveedor elegido tiene API key y esta operando. */
+        Boolean iaActiva
 ) {
 
-    public static ConfiguracionDto from(Configuracion c, boolean iaDisponible) {
-        return new ConfiguracionDto(c.getNombreSucursal(), c.getZona(), c.getTamano(),
-                c.getHoraApertura(), c.getHoraCierre(), c.isIaHabilitada(),
+    public static ConfiguracionDto from(Configuracion c, boolean iaActiva) {
+        return new ConfiguracionDto(
+                c.getNombreSucursal(), c.getZona(), c.getTamano(),
+                c.getHoraApertura(), c.getHoraCierre(),
                 c.getMargenMinimoPromo(), c.getDescuentoMaximo(),
-                c.getMesesHistorico(), c.getTransaccionesPorEmpleadoHora(), iaDisponible);
+                c.getMesesHistorico(), c.getTransaccionesPorEmpleadoHora(),
+                c.getProveedorIa(), c.getModeloIa(), iaActiva);
     }
 }
