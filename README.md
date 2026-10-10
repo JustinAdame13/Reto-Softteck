@@ -4,10 +4,26 @@ API REST con Spring Boot 4 + PostgreSQL + Flyway. Base: `http://localhost:8080/a
 
 ## Cómo correrlo
 
-1. Crea la base de datos `tienda_inteligente` en PostgreSQL.
-2. Copia `.env.example` a `.env` y pon tu contraseña de PostgreSQL (el `.env` no se sube a git).
-3. Corre `PlsApplication`. Flyway crea las tablas (V1) y la configuración inicial (V2).
-4. (Opcional) Pon `IA_ANTHROPIC_API_KEY`, `IA_OPENAI_API_KEY` y/o `IA_GEMINI_API_KEY` en `.env` y prende el proveedor con
+1. Crea la base de datos en PostgreSQL (por defecto `mibase_limpia`; otra con `DB_URL`).
+2. Configura las **variables de entorno**. No hay archivo `.env`: `application.properties` las lee directo.
+   En IntelliJ: *Run → Edit Configurations → PlsApplication → Environment variables*.
+
+   | Variable | Obligatoria | Por defecto |
+   |---|---|---|
+   | `DB_PASSWORD` | **Sí** | — |
+   | `DB_URL` | No | `jdbc:postgresql://localhost:5432/mibase_limpia` |
+   | `DB_USERNAME` | No | `postgres` |
+   | `PORT` | No | `8080` |
+   | `CORS_ORIGINS` | No | `http://localhost:5173,http://localhost:3000` |
+   | `IA_ANTHROPIC_API_KEY` / `IA_OPENAI_API_KEY` / `IA_GEMINI_API_KEY` | No | vacía (IA apagada) |
+   | `IA_ANTHROPIC_MODELO` / `IA_OPENAI_MODELO` / `IA_GEMINI_MODELO` | No | el del código |
+   | `IA_TIMEOUT` | No | `90` (segundos) |
+   | `MOTOR_TIPO` / `MOTOR_URL` | No | `interno` / `http://localhost:8000` |
+   | `SHOW_SQL` | No | `false` |
+
+   En la nube se ponen en el panel de variables de entorno de la plataforma.
+3. Corre `PlsApplication`. Flyway crea las tablas (V1), la configuración inicial (V2) y el proveedor de IA (V3).
+4. (Opcional) Con una llave de IA configurada, prende el proveedor con
    `PATCH /configuracion/ia` → `{"proveedorIa": "ANTHROPIC"}` (opcional `"modeloIa"`). Apagar: `{"proveedorIa": "NINGUNO"}`.
    Sin llaves, todo funciona con Ayax sin IA (modelo `BASE`).
 

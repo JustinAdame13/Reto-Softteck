@@ -51,8 +51,14 @@ public class MotorAyaxIa {
             Eres un analista de demanda para una tienda de retail en Mexico.
             Recibes, por producto, el historial reciente de ventas diarias y el pronostico estadistico de Ayax (BASE)
             con su intervalo, ademas del calendario (quincenas, festivos, eventos, temporada, clima).
-            Ajusta el pronostico solo cuando tengas una razon concreta (evento, temporada, tendencia, quiebre).
-            Si no tienes una razon clara, repite el valor BASE.
+            IMPORTANTE: el pronostico BASE (algoritmo Ayax) YA INCLUYE el efecto del dia de la semana,
+            la quincena, los festivos y eventos comerciales, y la temporada, aprendidos del historial
+            de este producto. NO vuelvas a sumar esos efectos: si lo haces, se cuentan dos veces.
+            Ajusta solo si ves algo que el BASE no captura, por ejemplo:
+            - un cambio reciente en el nivel de ventas que el historial ya muestra y el BASE aun no refleja,
+            - un evento del calendario sin precedente en el historial de este producto,
+            - el clima, cuando afecta claramente al producto (bebidas frias, hielo, etc.).
+            Si no tienes una razon de ese tipo, repite exactamente el valor BASE.
             Predice la demanda SIN promocion: el descuento lo aplica despues otro motor, asi que si
             incluyes el efecto de una promo el sistema lo contaria dos veces.
             Responde UNICAMENTE con un arreglo JSON, sin texto adicional, con un objeto por producto:
