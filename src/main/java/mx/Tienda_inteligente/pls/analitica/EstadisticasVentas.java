@@ -61,6 +61,57 @@ public class EstadisticasVentas {
         return resultado;
     }
 
+    /**
+     * Marca, por producto, los dias [desde, hasta] en que hubo promocion: ventas con
+     * promocion_id o con descuento, o una promocion ACTIVA/FINALIZADA vigente ese dia.
+     * El motor de prediccion excluye esos dias porque inflan la demanda "normal".
+     * Productos sin promociones no aparecen en el mapa.
+     */
+    public Map<Long, boolean[]> diasConPromocion(LocalDate desde, LocalDate hasta, Collection<Long> productoIds) {
+        int n = (int) ChronoUnit.DAYS.between(desde, hasta) + 1;
+        if (n <= 0) return Map.of();
+
+        boolean filtrar = productoIds != null && !productoIds.isEmpty();
+        MapSqlParameterSource p = new MapSqlParameterSource()
+                .addValue("desde", desde)
+                .addValue("hasta", hasta)
+                .addValue("desdeTs", desde.atStartOfDay())
+                .addValue("hastaExcl", hasta.plusDays(1).atStartOfDay());
+        if (filtrar) p.addValue("ids", productoIds);
+
+        Map<Long, boolean[]> r = new HashMap<>();
+
+        // 1) Lo que realmente se vendio con promocion o con descuento
+        jdbc.query("""
+                SELECT DISTINCT producto_id, CAST(fecha_hora AS DATE) AS dia
+                FROM ventas
+                WHERE fecha_hora >= :desdeTs AND fecha_hora < :hastaExcl
+                  AND (promocion_id IS NOT NULL OR descuento_aplicado > 0)
+                """ + (filtrar ? " AND producto_id IN (:ids)" : ""), p, rs -> {
+            int i = (int) ChronoUnit.DAYS.between(desde, rs.getObject("dia", LocalDate.class));
+            if (i >= 0 && i < n) {
+                r.computeIfAbsent(rs.getLong("producto_id"), k -> new boolean[n])[i] = true;
+            }
+        });
+
+        // 2) Promociones vigentes aunque la venta no traiga promocion_id (cargas por lote)
+        jdbc.query("""
+                SELECT producto_id, fecha_inicio, fecha_fin
+                FROM promociones
+                WHERE estado IN ('ACTIVA', 'FINALIZADA')
+                  AND fecha_inicio <= :hasta AND fecha_fin >= :desde
+                """ + (filtrar ? " AND producto_id IN (:ids)" : ""), p, rs -> {
+            LocalDate ini = rs.getObject("fecha_inicio", LocalDate.class);
+            LocalDate fin = rs.getObject("fecha_fin", LocalDate.class);
+            int a = (int) Math.max(0, ChronoUnit.DAYS.between(desde, ini));
+            int b = (int) Math.min(n - 1, ChronoUnit.DAYS.between(desde, fin));
+            if (a > b) return;
+            boolean[] m = r.computeIfAbsent(rs.getLong("producto_id"), k -> new boolean[n]);
+            for (int i = a; i <= b; i++) m[i] = true;
+        });
+        return r;
+    }
+
     public SerieDiaria serieVacia(Long productoId, LocalDate desde, LocalDate hasta) {
         int n = (int) Math.max(0, ChronoUnit.DAYS.between(desde, hasta) + 1);
         return new SerieDiaria(productoId, desde, new double[n]);

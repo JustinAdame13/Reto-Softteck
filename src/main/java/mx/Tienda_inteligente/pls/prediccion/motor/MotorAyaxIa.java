@@ -14,7 +14,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
- * Potencia el pronostico BASE con IA. No lo reemplaza: recibe su resultado, el
+ * Ayax potenciado con IA. Toma el pronostico de Ayax (modelo BASE) y no lo reemplaza: recibe su resultado, el
  * historial resumido y el calendario, y ajusta los numeros (por ejemplo, un evento
  * que el algoritmo no tiene suficiente historia para medir).
  *
@@ -31,10 +31,17 @@ import java.util.stream.Collectors;
  * 3. SIN HUECOS. Si la IA omite un producto o un dia, se conserva el valor BASE.
  */
 @Component
-public class MotorPrediccionIa {
+public class MotorAyaxIa {
 
+    /** Tope de productos por llamada; con muchos dias se mandan menos (ver productosPorLlamada). */
     private static final int PRODUCTOS_POR_LLAMADA = 10;
     private static final int MAX_TOKENS = 8000;
+    /** Presupuesto de salida que dejamos para el JSON (el resto es margen de seguridad). */
+    private static final int TOKENS_UTILES = 6500;
+    /** Estimado de tokens por cada dia de un producto en la respuesta ({"fecha":..,"cantidad":..}). */
+    private static final int TOKENS_POR_DIA = 35;
+    /** Estimado de tokens fijos por producto (productoId + explicacion). */
+    private static final int TOKENS_POR_PRODUCTO = 60;
 
     /** Cuanto puede alejarse el ajuste del BASE, hacia abajo y hacia arriba. */
     private static final double AJUSTE_MINIMO = 0.5;
@@ -42,7 +49,7 @@ public class MotorPrediccionIa {
 
     private static final String SISTEMA = """
             Eres un analista de demanda para una tienda de retail en Mexico.
-            Recibes, por producto, el historial reciente de ventas diarias y un pronostico estadistico (BASE)
+            Recibes, por producto, el historial reciente de ventas diarias y el pronostico estadistico de Ayax (BASE)
             con su intervalo, ademas del calendario (quincenas, festivos, eventos, temporada, clima).
             Ajusta el pronostico solo cuando tengas una razon concreta (evento, temporada, tendencia, quiebre).
             Si no tienes una razon clara, repite el valor BASE.
@@ -58,7 +65,7 @@ public class MotorPrediccionIa {
 
     private final ClienteIa clienteIa;
 
-    public MotorPrediccionIa(ClienteIa clienteIa) {
+    public MotorAyaxIa(ClienteIa clienteIa) {
         this.clienteIa = clienteIa;
     }
 
@@ -87,8 +94,9 @@ public class MotorPrediccionIa {
         int recortados = 0;
 
         List<ProductoHistorial> productos = entrada.productos();
-        for (int i = 0; i < productos.size(); i += PRODUCTOS_POR_LLAMADA) {
-            List<ProductoHistorial> bloque = productos.subList(i, Math.min(productos.size(), i + PRODUCTOS_POR_LLAMADA));
+        int porLlamada = productosPorLlamada(entrada.dias());
+        for (int i = 0; i < productos.size(); i += porLlamada) {
+            List<ProductoHistorial> bloque = productos.subList(i, Math.min(productos.size(), i + porLlamada));
 
             StringBuilder prompt = new StringBuilder(calendario).append("\nPRODUCTOS:\n");
             for (ProductoHistorial p : bloque) {
@@ -110,12 +118,12 @@ public class MotorPrediccionIa {
 
         if (lotesFallidos > 0) {
             advertencias.add("La IA no respondio en " + lotesFallidos
-                    + " lote(s) de productos; esos se quedaron con el modelo BASE");
+                    + " lote(s) de productos; esos se quedaron con Ayax sin IA (BASE)");
         }
         if (recortados > 0) {
             advertencias.add(recortados + " valor(es) de la IA se salieron de la banda permitida ("
                     + (int) (AJUSTE_MINIMO * 100) + "%-" + (int) (AJUSTE_MAXIMO * 100)
-                    + "% del BASE) y se recortaron");
+                    + "% de Ayax) y se recortaron");
         }
         return Optional.of(new AjusteIa(resultado, explicaciones, advertencias));
     }
@@ -190,20 +198,39 @@ public class MotorPrediccionIa {
 
                 double cantidad = Math.max(0, a[0]);
                 double acotada = Math.min(Math.max(cantidad, piso), techo);
-                if (Math.abs(acotada - cantidad) > 0.01) {
-                    recortados++;
-                }
+                boolean recortado = Math.abs(acotada - cantidad) > 0.01;
 
                 double min = Double.isNaN(a[1]) ? acotada * 0.8 : a[1];
                 double max = Double.isNaN(a[2]) ? acotada * 1.2 : a[2];
                 double inferior = Math.max(0, Math.min(min, acotada));
-                double superior = Math.max(max, acotada);
+
+                // El limite superior tambien se acota: planificar() lo usa para el stock de
+                // seguridad, asi que un "max" alucinado se convertiria en una compra real.
+                double techoSuperior = Math.max(acotada,
+                        b.limiteSuperior() > 0 ? b.limiteSuperior() * AJUSTE_MAXIMO : techo);
+                double superiorIa = Math.max(max, acotada);
+                double superior = Math.min(superiorIa, techoSuperior);
+                if (superiorIa - superior > 0.01) {
+                    recortado = true;
+                }
+                if (recortado) {
+                    recortados++;
+                }
 
                 resultado.add(new ResultadoPrediccion(b.productoId(), b.fechaObjetivo(),
                         r2(acotada), r2(inferior), r2(superior)));
             }
         }
         return recortados;
+    }
+
+    /**
+     * Cuantos productos caben en una llamada sin que la respuesta JSON se corte por MAX_TOKENS.
+     * 7 dias -> 10 productos; 30 dias -> 5 productos; 90 dias -> 2 productos.
+     */
+    static int productosPorLlamada(int dias) {
+        int porProducto = TOKENS_POR_PRODUCTO + Math.max(1, dias) * TOKENS_POR_DIA;
+        return Math.max(1, Math.min(PRODUCTOS_POR_LLAMADA, TOKENS_UTILES / porProducto));
     }
 
     private void conservarBase(List<ResultadoPrediccion> resultado, List<ProductoHistorial> bloque,
@@ -253,9 +280,13 @@ public class MotorPrediccionIa {
 
         double[] v = p.ventasDiarias();
         int desde = Math.max(0, v.length - 56);
-        sb.append("  ventas ultimos ").append(v.length - desde).append(" dias (mas antiguo primero): ");
+        sb.append("  ventas ultimos ").append(v.length - desde)
+                .append(" dias (mas antiguo primero; * = dia con promocion, no es demanda normal): ");
         for (int i = desde; i < v.length; i++) {
             sb.append(Math.round(v[i]));
+            if (p.conPromocion(i)) {
+                sb.append('*');
+            }
             if (i < v.length - 1) {
                 sb.append(',');
             }

@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * La IA es OPCIONAL y NUNCA tumba una peticion: si no hay proveedor, si no hay
  * llave o si la llamada falla, regresa Optional.empty() y quien llama se queda
- * con el algoritmo BASE.
+ * con Ayax sin IA (modelo BASE).
  */
 @Component
 public class ClienteIa {
@@ -57,9 +57,21 @@ public class ClienteIa {
         return clienteActivo().isPresent();
     }
 
-    /** El modelo que se usaria ahora mismo, o cadena vacia si la IA esta apagada. */
+    /**
+     * El modelo que se usaria ahora mismo, o cadena vacia si la IA esta apagada.
+     * Si el gerente eligio uno con PATCH /configuracion/ia (columna modelo_ia) gana ese;
+     * si no, el por defecto del proveedor (.env o codigo).
+     */
     public String getModelo() {
-        return clienteActivo().map(ClienteLLM::modelo).orElse("");
+        return clienteActivo().map(c -> modeloEfectivo(c, modeloElegido())).orElse("");
+    }
+
+    private String modeloElegido() {
+        return configuracionService.obtenerEntidad().getModeloIa();
+    }
+
+    private static String modeloEfectivo(ClienteLLM cliente, String elegido) {
+        return elegido == null || elegido.isBlank() ? cliente.modelo() : elegido.trim();
     }
 
     public EstadoIa estado() {
@@ -115,7 +127,8 @@ public class ClienteIa {
         llamadas.incrementAndGet();
         long t0 = System.nanoTime();
         try {
-            String texto = cliente.get().completar(sistema, prompt, maxTokens, prefill);
+            String modelo = modeloEfectivo(cliente.get(), modeloElegido());
+            String texto = cliente.get().completar(modelo, sistema, prompt, maxTokens, prefill);
             ultimaLatenciaMs = (System.nanoTime() - t0) / 1_000_000;
             ultimaOk = true;
             ultimoError = null;
@@ -131,7 +144,7 @@ public class ClienteIa {
         fallos.incrementAndGet();
         ultimaOk = false;
         ultimoError = mensaje;
-        log.warn("La llamada a la IA fallo, se usara el algoritmo BASE: {}", mensaje);
+        log.warn("La llamada a la IA fallo, se usara Ayax sin IA (BASE): {}", mensaje);
     }
 
     /** Helper para leer numeros de los Map que regresa el parser. */

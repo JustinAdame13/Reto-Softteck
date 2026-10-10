@@ -38,7 +38,7 @@ public class ClienteAnthropic extends ClienteLLMHttp {
     }
 
     @Override
-    protected String ruta() {
+    protected String ruta(String modelo) {
         return "/v1/messages";
     }
 
@@ -49,7 +49,8 @@ public class ClienteAnthropic extends ClienteLLMHttp {
     }
 
     @Override
-    protected Map<String, Object> cuerpo(String sistema, String prompt, int maxTokens, String prefill) {
+    protected Map<String, Object> cuerpo(String modelo, String sistema, String prompt, int maxTokens,
+                                         String prefill) {
         List<Map<String, Object>> mensajes = prefill.isBlank()
                 ? List.<Map<String, Object>>of(
                         Map.of("role", "user", "content", prompt))

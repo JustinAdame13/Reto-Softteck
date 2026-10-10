@@ -10,9 +10,10 @@ import mx.Tienda_inteligente.pls.contexto.ContextoDto;
 import mx.Tienda_inteligente.pls.contexto.ContextoService;
 import mx.Tienda_inteligente.pls.inventario.AnalisisInventario;
 import mx.Tienda_inteligente.pls.prediccion.motor.EntradaPrediccion;
-import mx.Tienda_inteligente.pls.prediccion.motor.MotorPrediccionBase;
+import mx.Tienda_inteligente.pls.prediccion.motor.CalibracionAyax;
+import mx.Tienda_inteligente.pls.prediccion.motor.MotorAyax;
+import mx.Tienda_inteligente.pls.prediccion.motor.MotorAyaxIa;
 import mx.Tienda_inteligente.pls.prediccion.motor.MotorPrediccionExterno;
-import mx.Tienda_inteligente.pls.prediccion.motor.MotorPrediccionIa;
 import mx.Tienda_inteligente.pls.prediccion.motor.ProductoHistorial;
 import mx.Tienda_inteligente.pls.prediccion.motor.ResultadoPrediccion;
 import mx.Tienda_inteligente.pls.producto.Producto;
@@ -20,7 +21,9 @@ import mx.Tienda_inteligente.pls.producto.ProductoRepository;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -43,29 +46,36 @@ public class PrediccionService {
     private final ConfiguracionService configuracionService;
     private final ContextoService contextoService;
     private final EstadisticasVentas estadisticas;
-    private final MotorPrediccionBase motorBase;
+    private final MotorAyax ayax;
     private final MotorPrediccionExterno motorExterno;
-    private final MotorPrediccionIa motorIa;
+    private final MotorAyaxIa motorIa;
     private final NamedParameterJdbcTemplate jdbc;
+    private final TransactionTemplate tx;
 
     public PrediccionService(PrediccionRepository repository, ProductoRepository productoRepository,
                              ConfiguracionService configuracionService, ContextoService contextoService,
-                             EstadisticasVentas estadisticas, MotorPrediccionBase motorBase,
-                             MotorPrediccionExterno motorExterno, MotorPrediccionIa motorIa,
-                             NamedParameterJdbcTemplate jdbc) {
+                             EstadisticasVentas estadisticas, MotorAyax ayax,
+                             MotorPrediccionExterno motorExterno, MotorAyaxIa motorIa,
+                             NamedParameterJdbcTemplate jdbc, PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.productoRepository = productoRepository;
         this.configuracionService = configuracionService;
         this.contextoService = contextoService;
         this.estadisticas = estadisticas;
-        this.motorBase = motorBase;
+        this.ayax = ayax;
         this.motorExterno = motorExterno;
         this.motorIa = motorIa;
         this.jdbc = jdbc;
+        this.tx = new TransactionTemplate(transactionManager);
     }
 
-    /** Ejecuta el motor y guarda (reemplaza) las predicciones. */
-    @Transactional
+    /**
+     * Ejecuta el motor y guarda (reemplaza) las predicciones.
+     *
+     * A proposito NO es @Transactional completo: el motor externo y la IA pueden tardar
+     * decenas de segundos y no deben tener una conexion de BD apartada mientras tanto.
+     * Solo el borrado + guardado final va dentro de una transaccion (ver tx.execute abajo).
+     */
     public GeneracionResponse generar(GenerarPrediccionRequest req) {
         int dias = req.dias() == null ? 7 : req.dias();
         LocalDate inicio = req.fechaInicio() != null ? req.fechaInicio() : LocalDate.now();
@@ -98,19 +108,22 @@ public class PrediccionService {
 
         EntradaPrediccion entrada = construirEntrada(productos, inicio, dias);
 
-        // BASE: motor externo (Python) si esta configurado; si no o si falla, el interno en Java
-        String motorUsado = "INTERNO";
+        // BASE: motor externo (Python) si esta configurado; si no o si falla, Ayax (Java)
+        String motorUsado = MotorAyax.NOMBRE;
         List<ResultadoPrediccion> base = null;
         if (motorExterno.habilitado()) {
             base = motorExterno.predecir(entrada).orElse(null);
             if (base == null) {
-                advertencias.add("El motor externo no respondio; se uso el motor interno");
+                advertencias.add("El motor externo no respondio; se uso Ayax");
             } else {
                 motorUsado = "EXTERNO";
             }
         }
+        Map<Long, CalibracionAyax> calibracion = Map.of();
         if (base == null) {
-            base = motorBase.predecir(entrada);
+            MotorAyax.Resultado r = ayax.predecirConCalibracion(entrada);
+            base = r.predicciones();
+            calibracion = r.calibracion();
         }
 
         Map<ModeloPrediccion, List<ResultadoPrediccion>> porModelo = new LinkedHashMap<>();
@@ -123,11 +136,10 @@ public class PrediccionService {
                         explicacionesIa.putAll(ajuste.explicaciones());
                         advertencias.addAll(ajuste.advertencias());
                     },
-                    () -> advertencias.add("La IA esta apagada o sin api-key; solo se guardo el modelo BASE"));
+                    () -> advertencias.add("La IA esta apagada o sin api-key; solo se guardo Ayax sin IA (BASE)"));
         }
 
         Set<Long> ids = productos.stream().map(Producto::getId).collect(Collectors.toSet());
-        repository.borrar(ids, porModelo.keySet(), inicio, fin);
 
         Map<Long, Producto> porId = productos.stream().collect(Collectors.toMap(Producto::getId, Function.identity()));
         LocalDateTime ahora = LocalDateTime.now();
@@ -142,7 +154,12 @@ public class PrediccionService {
                 guardar.addAll(planificar(porId.get(pid), lista, modelo, ahora));
             });
         });
-        List<PrediccionResponse> respuesta = repository.saveAll(guardar).stream()
+        // Unica parte transaccional: reemplazar las predicciones del rango
+        List<PrediccionDemanda> guardadas = tx.execute(status -> {
+            repository.borrar(ids, porModelo.keySet(), inicio, fin);
+            return repository.saveAll(guardar);
+        });
+        List<PrediccionResponse> respuesta = (guardadas == null ? List.<PrediccionDemanda>of() : guardadas).stream()
                 .map(PrediccionResponse::from)
                 .sorted(Comparator.comparing(PrediccionResponse::productoId)
                         .thenComparing(PrediccionResponse::fechaObjetivo)
@@ -150,7 +167,7 @@ public class PrediccionService {
                 .toList();
 
         return new GeneracionResponse(inicio, fin, new ArrayList<>(porModelo.keySet()), productos.size(),
-                respuesta.size(), motorUsado, advertencias, explicacionesIa, respuesta);
+                respuesta.size(), motorUsado, advertencias, explicacionesIa, calibracion, respuesta);
     }
 
     /** Arma el contrato para el motor: historial diario de cada producto + calendario. */
@@ -159,12 +176,14 @@ public class PrediccionService {
         LocalDate histDesde = inicio.minusMonths(conf.getMesesHistorico());
         LocalDate histHasta = inicio.minusDays(1);
         Map<Long, SerieDiaria> series = estadisticas.series(histDesde, histHasta, null);
+        // Dias con promocion: el motor los excluye para aprender la demanda "normal"
+        Map<Long, boolean[]> promos = estadisticas.diasConPromocion(histDesde, histHasta, null);
 
         List<ProductoHistorial> historiales = productos.stream().map(p -> {
             SerieDiaria s = series.getOrDefault(p.getId(), estadisticas.serieVacia(p.getId(), histDesde, histHasta));
             return new ProductoHistorial(p.getId(), p.getSku(), p.getNombre(), p.getCategoria(), p.getPrecioVenta(),
                     p.getCosto(), p.getStockActual(), p.getLeadTimeDias(), p.isEsPerecedero(), p.getVidaUtilDias(),
-                    histDesde, s.valores());
+                    histDesde, s.valores(), promos.get(p.getId()));
         }).toList();
 
         List<ContextoDto> contexto = new ArrayList<>(

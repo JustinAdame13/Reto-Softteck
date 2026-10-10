@@ -35,7 +35,7 @@ public class ClienteOpenAI extends ClienteLLMHttp {
     }
 
     @Override
-    protected String ruta() {
+    protected String ruta(String modelo) {
         return "/v1/chat/completions";
     }
 
@@ -45,7 +45,8 @@ public class ClienteOpenAI extends ClienteLLMHttp {
     }
 
     @Override
-    protected Map<String, Object> cuerpo(String sistema, String prompt, int maxTokens, String prefill) {
+    protected Map<String, Object> cuerpo(String modelo, String sistema, String prompt, int maxTokens,
+                                         String prefill) {
         return Map.of("model", modelo,
                 "max_tokens", maxTokens,
                 "temperature", TEMPERATURA,

@@ -35,7 +35,7 @@ public class ClienteGemini extends ClienteLLMHttp {
     }
 
     @Override
-    protected String ruta() {
+    protected String ruta(String modelo) {
         return "/v1beta/models/" + modelo + ":generateContent";
     }
 
@@ -45,7 +45,8 @@ public class ClienteGemini extends ClienteLLMHttp {
     }
 
     @Override
-    protected Map<String, Object> cuerpo(String sistema, String prompt, int maxTokens, String prefill) {
+    protected Map<String, Object> cuerpo(String modelo, String sistema, String prompt, int maxTokens,
+                                         String prefill) {
         return Map.of(
                 "systemInstruction", Map.of("parts", List.of(Map.of("text", sistema))),
                 "contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", prompt)))),

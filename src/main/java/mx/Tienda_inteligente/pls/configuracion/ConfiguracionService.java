@@ -91,9 +91,15 @@ public class ConfiguracionService {
                     Map.of("proveedorIa", "Disponibles: " + registro.disponibles()));
         }
 
+        // El modelo pertenece al proveedor: al cambiar de proveedor sin mandar modelo,
+        // o al apagar la IA, se limpia para no quedar con "GEMINI + claude-..."
+        String modeloLimpio = (proveedor == Enums.ProveedorIA.NINGUNO || modelo == null || modelo.isBlank())
+                ? null
+                : modelo.trim();
+
         Configuracion c = obtenerEntidad();
         c.setProveedorIa(proveedor);
-        c.setModeloIa(modelo);
+        c.setModeloIa(modeloLimpio);
         return ConfiguracionDto.from(repository.save(c), iaActiva());
     }
 }

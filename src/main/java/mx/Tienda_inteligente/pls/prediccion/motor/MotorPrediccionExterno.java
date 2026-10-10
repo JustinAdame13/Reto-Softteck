@@ -17,7 +17,7 @@ import java.util.Optional;
 /**
  * Motor externo (por ejemplo, el companero de algoritmos en Python con FastAPI).
  * Se activa con app.motor.tipo=externo. Recibe EntradaPrediccion en POST {app.motor.url}/predecir
- * y debe regresar una lista de ResultadoPrediccion. Si falla, el servicio usa el motor interno.
+ * y debe regresar una lista de ResultadoPrediccion. Si falla, el servicio usa Ayax.
  */
 @Component
 public class MotorPrediccionExterno {
@@ -52,7 +52,7 @@ public class MotorPrediccionExterno {
                     });
             return Optional.ofNullable(r);
         } catch (Exception e) {
-            log.warn("El motor externo fallo, se usa el interno: {}", e.getMessage());
+            log.warn("El motor externo fallo, se usa Ayax: {}", e.getMessage());
             return Optional.empty();
         }
     }

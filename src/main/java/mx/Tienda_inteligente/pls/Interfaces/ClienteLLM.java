@@ -7,7 +7,7 @@ import mx.Tienda_inteligente.pls.Enums.Enums;
  * indexa solo, asi que agregar un proveedor nuevo no obliga a tocar nada mas.
  *
  * La IA es OPCIONAL: si el proveedor no tiene api-key o modelo, disponible() = false
- * y el sistema se queda con el algoritmo BASE.
+ * y el sistema se queda con Ayax sin IA (modelo BASE).
  */
 public interface ClienteLLM {
 
@@ -17,11 +17,11 @@ public interface ClienteLLM {
     /** Si tiene credenciales y modelo para operar. */
     boolean disponible();
 
-    /** El modelo que va a usar, para mostrarlo en GET /configuracion/ia/estado. */
+    /** El modelo por defecto (el del .env, o el del codigo si el .env no trae). */
     String modelo();
 
     /**
-     * Manda el prompt y devuelve la respuesta en texto plano.
+     * Manda el prompt con el modelo por defecto y devuelve la respuesta en texto plano.
      *
      * @param prefill texto con el que debe empezar la respuesta (por ejemplo "[" para
      *                forzar un arreglo JSON). El proveedor que no lo soporte lo ignora;
@@ -29,5 +29,13 @@ public interface ClienteLLM {
      * @throws Exception si la llamada falla. Quien llama (ClienteIa) la atrapa y el
      *                   motor se queda con la prediccion BASE.
      */
-    String completar(String sistema, String prompt, int maxTokens, String prefill) throws Exception;
+    default String completar(String sistema, String prompt, int maxTokens, String prefill) throws Exception {
+        return completar(null, sistema, prompt, maxTokens, prefill);
+    }
+
+    /**
+     * Igual que el anterior, pero con un modelo especifico (el que el gerente eligio con
+     * PATCH /configuracion/ia). Si modelo es null o vacio se usa {@link #modelo()}.
+     */
+    String completar(String modelo, String sistema, String prompt, int maxTokens, String prefill) throws Exception;
 }

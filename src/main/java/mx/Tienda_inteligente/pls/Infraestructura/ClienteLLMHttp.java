@@ -46,11 +46,13 @@ public abstract class ClienteLLMHttp implements ClienteLLM {
 
     // --- Los cuatro puntos donde difieren los proveedores ---
 
-    protected abstract String ruta();
+    /** @param modelo el modelo efectivo de esta llamada (Gemini lo lleva en la ruta). */
+    protected abstract String ruta(String modelo);
 
     protected abstract void cabeceras(HttpHeaders h);
 
-    protected abstract Map<String, Object> cuerpo(String sistema, String prompt, int maxTokens, String prefill);
+    protected abstract Map<String, Object> cuerpo(String modelo, String sistema, String prompt, int maxTokens,
+                                                  String prefill);
 
     protected abstract String extraerTexto(Map<String, Object> respuesta);
 
@@ -70,17 +72,19 @@ public abstract class ClienteLLMHttp implements ClienteLLM {
     }
 
     @Override
-    public final String completar(String sistema, String prompt, int maxTokens, String prefill) throws Exception {
+    public final String completar(String modeloElegido, String sistema, String prompt, int maxTokens,
+                                  String prefill) throws Exception {
         if (!disponible()) {
             throw new IllegalStateException("Proveedor " + proveedor() + " sin api-key o sin modelo");
         }
         String pre = prefill == null ? "" : prefill;
+        String m = modeloElegido == null || modeloElegido.isBlank() ? modelo : modeloElegido.trim();
 
         String crudo = http.post()
-                .uri(ruta())
+                .uri(ruta(m))
                 .headers(this::cabeceras)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(cuerpo(sistema, prompt, maxTokens, pre))
+                .body(cuerpo(m, sistema, prompt, maxTokens, pre))
                 .retrieve()
                 .body(String.class);
 
