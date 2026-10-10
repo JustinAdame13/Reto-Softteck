@@ -78,8 +78,10 @@ public class PrediccionService {
             case "BASE" -> false;
             case "IA", "AMBOS" -> {
                 if (!motorIa.disponible()) {
-                    throw new ReglaNegocioException("La IA no esta configurada en el servidor (falta IA_API_KEY)",
-                            Map.of("modelo", "Usa BASE o AUTO"));
+                    throw new ReglaNegocioException(
+                            "La IA esta apagada o el proveedor elegido no tiene api-key en el servidor",
+                            Map.of("modelo", "Prende un proveedor con PATCH /configuracion/ia, "
+                                    + "o revisa GET /configuracion/ia/estado. Mientras tanto usa BASE o AUTO"));
                 }
                 yield true;
             }
@@ -113,10 +115,15 @@ public class PrediccionService {
 
         Map<ModeloPrediccion, List<ResultadoPrediccion>> porModelo = new LinkedHashMap<>();
         porModelo.put(ModeloPrediccion.BASE, base);
+        Map<Long, String> explicacionesIa = new LinkedHashMap<>();
         if (usarIa) {
             motorIa.potenciar(entrada, base).ifPresentOrElse(
-                    ia -> porModelo.put(ModeloPrediccion.IA, ia),
-                    () -> advertencias.add("La IA no respondio a tiempo; solo se guardo el modelo BASE"));
+                    ajuste -> {
+                        porModelo.put(ModeloPrediccion.IA, ajuste.predicciones());
+                        explicacionesIa.putAll(ajuste.explicaciones());
+                        advertencias.addAll(ajuste.advertencias());
+                    },
+                    () -> advertencias.add("La IA esta apagada o sin api-key; solo se guardo el modelo BASE"));
         }
 
         Set<Long> ids = productos.stream().map(Producto::getId).collect(Collectors.toSet());
@@ -143,7 +150,7 @@ public class PrediccionService {
                 .toList();
 
         return new GeneracionResponse(inicio, fin, new ArrayList<>(porModelo.keySet()), productos.size(),
-                respuesta.size(), motorUsado, advertencias, respuesta);
+                respuesta.size(), motorUsado, advertencias, explicacionesIa, respuesta);
     }
 
     /** Arma el contrato para el motor: historial diario de cada producto + calendario. */

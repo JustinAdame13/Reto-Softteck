@@ -1,29 +1,42 @@
 package mx.Tienda_inteligente.pls.Infraestructura;
 
-import mx.Tienda_inteligente.pls.Enums.Enums;
 import mx.Tienda_inteligente.pls.Interfaces.ClienteLLM;
+import org.springframework.boot.json.JsonParser;
+import org.springframework.boot.json.JsonParserFactory;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
+/**
+ * Base HTTP comun a todos los proveedores. Lo que cambia de uno a otro queda en
+ * cuatro metodos: la ruta, las cabeceras, el cuerpo y como sacar el texto.
+ */
 public abstract class ClienteLLMHttp implements ClienteLLM {
-    protected final ObjectMapper json = new ObjectMapper();
+
+    /**
+     * Determinismo. Sin temperatura 0 la misma prediccion da numeros distintos en
+     * cada corrida y /predicciones/comparar se ve inestable frente al jurado.
+     */
+    protected static final double TEMPERATURA = 0.0;
+
+    protected final JsonParser json = JsonParserFactory.getJsonParser();
     protected final RestClient http;
     protected final String apiKey;
     protected final String modelo;
 
-    protected ClienteLLMHttp(String baseUrl, String apiKey,
-                             String modelo, int timeoutSeg) {
-        this.apiKey = apiKey == null ? "" : apiKey;
-        this.modelo = modelo;
+    protected ClienteLLMHttp(String baseUrl, String apiKey, String modelo, int timeoutSeg) {
+        this.apiKey = apiKey == null ? "" : apiKey.trim();
+        this.modelo = modelo == null ? "" : modelo.trim();
 
-        var factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(timeoutSeg * 1000);
-        factory.setReadTimeout(timeoutSeg * 1000);
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
+        factory.setReadTimeout(Duration.ofSeconds(timeoutSeg));
 
         this.http = RestClient.builder()
                 .baseUrl(baseUrl)
@@ -31,35 +44,65 @@ public abstract class ClienteLLMHttp implements ClienteLLM {
                 .build();
     }
 
-    /** Qué proveedor es, para que el registro lo indexe. */
-    public abstract Enums.ProveedorIA proveedor();
+    // --- Los cuatro puntos donde difieren los proveedores ---
 
-    /** Si tiene credenciales para operar. */
-    public boolean disponible() {
-        return !apiKey.isBlank() && modelo != null && !modelo.isBlank();
+    protected abstract String ruta();
+
+    protected abstract void cabeceras(HttpHeaders h);
+
+    protected abstract Map<String, Object> cuerpo(String sistema, String prompt, int maxTokens, String prefill);
+
+    protected abstract String extraerTexto(Map<String, Object> respuesta);
+
+    /** true si el proveedor acepta que la respuesta venga empezada (prefill). */
+    protected boolean soportaPrefill() {
+        return false;
     }
 
-    // --- Los cuatro puntos donde difieren los proveedores ---
-    protected abstract String ruta();
-    protected abstract void cabeceras(HttpHeaders h);
-    protected abstract Map<String, Object> cuerpo(String prompt);
-    protected abstract String extraerTexto(JsonNode raiz);
+    @Override
+    public final String modelo() {
+        return modelo;
+    }
 
     @Override
-    public final String completar(String prompt) throws Exception {
+    public boolean disponible() {
+        return !apiKey.isBlank() && !modelo.isBlank();
+    }
+
+    @Override
+    public final String completar(String sistema, String prompt, int maxTokens, String prefill) throws Exception {
         if (!disponible()) {
-            throw new IllegalStateException(
-                    "Proveedor " + proveedor() + " sin api-key o sin modelo");
+            throw new IllegalStateException("Proveedor " + proveedor() + " sin api-key o sin modelo");
         }
+        String pre = prefill == null ? "" : prefill;
 
         String crudo = http.post()
                 .uri(ruta())
                 .headers(this::cabeceras)
-                .body(cuerpo(prompt))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(cuerpo(sistema, prompt, maxTokens, pre))
                 .retrieve()
                 .body(String.class);
 
-        return extraerTexto(json.readTree(crudo));
+        String textoRespuesta = extraerTexto(json.parseMap(crudo == null || crudo.isBlank() ? "{}" : crudo));
+
+        // Si el proveedor acepto el prefill, su respuesta NO lo incluye: se lo devolvemos.
+        return soportaPrefill() && !pre.isBlank() ? pre + textoRespuesta : textoRespuesta;
     }
 
+    // --- Helpers para navegar el JSON sin amarrarse a una version de Jackson ---
+
+    @SuppressWarnings("unchecked")
+    protected static Map<String, Object> mapa(Object o) {
+        return o instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    protected static List<Object> lista(Object o) {
+        return o instanceof List<?> l ? (List<Object>) l : List.of();
+    }
+
+    protected static String texto(Object o) {
+        return o == null ? "" : o.toString();
+    }
 }
